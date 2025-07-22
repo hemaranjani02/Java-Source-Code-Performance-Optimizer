@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Code Optimizer</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+     <script src="script.js"></script>
+  
+</head>
+<body>
+ 
+<!--Horizontal nav bar-->
+ <nav class="nav_bar" id="nav_bar">
+  <ul>
+    <li><h1>Performance Engineering</h1></li>
+    <li>
+      <form>
+        <label for="model">Model</label>
+        <select id="model" name="model">
+          <option value="llama">Llama</option>
+          <option value="GPT">GPT 4</option>
+        </select>
+        <!-- <button type="submit">Submit</button> -->
+      </form>
+    </li>
+  </ul>
+</nav>
+
+
+<!--vertical side bar-->
+<div class="sidebar">
+    <h2>Menu</h2>
+    <a href="#">Optimize JAVA Code</a>
+    <a href="#">Optimize Python Code</a>
+    <a href="#">Optimize JavaScript Code</a>
+  </div>
+
+
+
+
+
+<div class="chat-container">
+
+  <!--bot reply-->
+  <div class="chat-history" id="chat-history">
+
+    <div class="message bot-message" style="background-color: white;"> <!-- bot given code  --></div>
+   
+  </div>
+
+<!--input area-->
+ 
+<div class="chat-input-container"  >
+  <textarea id="user-input" placeholder="Type your Code..."></textarea>
+   <button onclick="sendMessage()">Send</button>
+</div>
+ </div>
+
+
+</body>
+</html>
+
+

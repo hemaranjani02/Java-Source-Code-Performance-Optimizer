@@ -1,0 +1,500 @@
+{
+  "Asynchronous call implementation": [
+    {
+      "overview": "When a downstream call is independent and does not depend on other concurrent downstream calls, it can be executed asynchronously. Below are different scenarios for implementation.",
+      "key_consideration": "When using CompletableFuture or @Async, ensure that the executor used for managing the thread pool is a platform-specific one (e.g., MDCThreadPoolExecutor, chubAsyncTask) to ensure proper context propagation and resource management.",
+      "methods": {
+        "CompletableFuture": [
+          {
+            "method": "completedFuture(value)",
+            "description": "A static method used to get a new CompletableFuture that is already in a completed state with the passed value as its result.",
+            "use_case": "Ideal for situations where a value is already computed and needs to be returned in a Future wrapper.",
+            "code_example": "public CompletableFuture<MyResponse> getMyResponseAsync(HttpEntity<MyRequest> reqEntity, String sid) {\n    ResponseEntity<MyResponse> responseEntity = serviceUtils.fetchMyResponse(reqEntity);\n    // responseEntity is already computed, so we wrap it in a completed future.\n    return CompletableFuture.completedFuture(responseEntity.getBody());\n}"
+          },
+          {
+            "method": "runAsync(runnable, executor)",
+            "description": "Executes a task asynchronously that does not produce a result. It is suitable for 'fire-and-forget' tasks.",
+            "use_case": "For operations like logging, auditing, or triggering notifications where the main thread doesn't need to wait for a result.",
+            "code_example": "public void requestDetails(Object payload, String uuid, String exception, String status, String errorCode) {\n    try {\n        CompletableFuture.runAsync(() -> {\n            messageTrackingDaoImpl.rtTrackingDetails(payload, uuid, exception, status, errorCode);\n        }, chubAsyncTask);\n    } catch (Exception e) {\n        // Handle exception\n    }\n}"
+          },
+          {
+            "method": "supplyAsync(supplier, executor)",
+            "description": "Executes a task asynchronously that supplies a result upon completion.",
+            "use_case": "For I/O-bound or CPU-intensive tasks like making a REST API call or performing a complex calculation, where a result is expected.",
+            "code_example": "public CompletableFuture<Object> apiCall(EWSRequest ewsRequest) {\n    CompletableFuture<Object> response = ApiCallCB.run(() -> {\n        return CompletableFuture.supplyAsync(() ->\n            restTemplateEWS.exchange(\n                uri,\n                HttpMethod.POST,\n                requestEntity,\n                String.class\n            ).getBody()\n        ).exceptionally(throwable -> rApiThrowable(throwable));\n    });\n    return response;\n}"
+          }
+        ],
+        "AsyncAnnotation": {
+          "description": "The @Async annotation is used on methods to indicate that they should be executed on a separate thread. For this to work, the caller and callee methods must be in different classes, and async support must be enabled.",
+          "use_case": "Simplifies running background tasks, such as database write operations or triggering other processes that don't need to block the main execution flow.",
+          "example": {
+            "caller_class": "VerificationServiceImpl",
+            "caller_method": "public VerificationResponse processVerification(VerificationRequest verificationRequest, StandardRequestHeaders stdReqHeaders) {\n    // ... business logic ...\n    // Asynchronously save the response without waiting.\n    decisioningDBServiceImpl.saveVerificationResponse(stdReqHeaders, verificationRequest, verificationResponse);\n    return verificationResponse;\n}",
+            "callee_class": "DecisioningDBServiceImpl",
+            "callee_method": "@Async\npublic void saveVerificationResponse(StandardRequestHeaders stdReqHeaders, String applicationID) {\n    @Autowired\n    MDCThreadPoolExecutor mdcThreadPoolExecutor;\n\n    CompletableFuture.supplyAsync(() -> {\n        try {\n            return aService.getFraudBlockFlag(anEntity, baseCin, sid);\n        } catch (Exception ex) {\n            LOG.error(\"Error fetching fraud block flag: {}\", ExceptionUtils.getStackTrace(ex));\n        }\n        return null;\n    }, mdcThreadPoolExecutor);\n}"
+          }
+        }
+      }
+    }
+  ],
+  "MDCThreadPoolExecutor": [
+    {
+      "Description": "MDCThreadPoolExecutor is a platform-specific implementation that extends the ThreadPoolExecutor to provide additional functionality: it copies the MDC instance values from the calling/main thread to the worker thread, ensuring that log information and other MDC-based data are retained. MDC is used to store diagnostic information (e.g., a user’s session ID) in per-thread variables to facilitate logging. Although MDC data is passed to child threads, MDCThreadPoolExecutor acts as a drop-in replacement for ThreadPoolExecutor and sets MDC data properly before each task. We observed intermediate failures for asynchronous/parallel calls which were implemented using Java CompletableFuture.supplyAsync with the default Executor. It is recommended to use platform-specific MDCThreadPoolExecutor to avoid such failures. When @Async is used at the method level, Spring executes that method in a separate thread using ThreadPoolExecutor. The platform provides MDCThreadPoolExecutor, which overrides Spring’s default ThreadPoolExecutor.",
+      "CodeComparison": {
+        "OldCode": "@Autowired\nExecutorService executor;\nprivate CompletableFuture<Long> getTotalCallsCount(CallLogDashboardRequest request) {\n    return CompletableFuture.supplyAsync(() -> service.getTotalCallsCount(request), executor);\n}",
+        "UpdatedCode": "@Autowired\nThreadPoolTaskExecutorService ioThreadExecutor;"
+      },
+      "ConfigNotes": "In the application.yml file, below configuration refers to MDCThreadPoolExecutor settings. By default, poolSize is 0 and maxPoolSize is Integer.MAX_VALUE. These values should be fine-tuned based on lab testing and recommendations.",
+      "ConfigExample": "executor:\n  poolSize: 20\n  maxPoolSize: 600\n  keepAliveTime: 60"
+    }
+  ],
+  "Resilience4j": [
+    {
+      "Overview": "Resilience4j is a lightweight, easy-to-use library designed to help developers build fault-tolerant applications. It provides various patterns to handle potential failures in microservices and distributed systems, such as circuit breakers, rate limiters, bulkheads, and time limiters. When integrated with Spring Boot, Resilience4j can enhance the robustness of applications by preventing cascading failures, managing traffic spikes, and avoiding service/resource degradation.",
+      "ChecklistTable": [
+        {
+          "SlNo": 1,
+          "Dependency": "Dependency for Resilience4j in pom.xml file.",
+          "SampleConfig": [
+            "<dependencies>",
+            "    <dependency>",
+            "        <groupId>org.springframework.cloud</groupId>",
+            "        <artifactId>spring-cloud-starter-circuitbreaker-resilience4j</artifactId>",
+            "    </dependency>",
+            "    <dependency>",
+            "        <groupId>io.github.resilience4j</groupId>",
+            "        <artifactId>resilience4j-bulkhead</artifactId>",
+            "    </dependency>",
+            "    <dependency>",
+            "        <groupId>io.github.resilience4j</groupId>",
+            "        <artifactId>resilience4j-spring-boot3</artifactId>",
+            "        <version>2.2.0</version>",
+            "    </dependency>",
+            "</dependencies>"
+          ]
+        },
+        {
+          "SlNo": 2,
+          "Dependency": "Make sure to have the timelimiter and thread-pool-bulkhead configuration for each backend call instance in application.yml.",
+          "SampleConfig": [
+            "resilience4j:",
+            "  circuitbreaker:",
+            "    configs:",
+            "      default:",
+            "        slidingWindowSize: 100",
+            "        permittedNumberOfCallsInHalfOpenState: 20",
+            "        waitDurationInOpenState: 5000",
+            "        failureRateThreshold: 50",
+            "  timelimiter:",
+            "    instances:",
+            "      locatorCommand:",
+            "        timeoutDuration: 1500ms",
+            "        cancelRunningFuture: true",
+            "      getCaddieCacheCmd:",
+            "        timeoutDuration: 1500ms",
+            "        cancelRunningFuture: true",
+            "  thread-pool-bulkhead:",
+            "    instances:",
+            "      locatorCommand:",
+            "        maxThreadPoolSize: 80",
+            "        coreThreadPoolSize: 80",
+            "        queueCapacity: 40",
+            "      getCaddieCacheCmd:",
+            "        maxThreadPoolSize: 80",
+            "        coreThreadPoolSize: 80",
+            "        queueCapacity: 80"
+          ]
+        }
+      ],
+      "BestPractices": [
+        "Do not have default configuration for all the backends.",
+        "TimeLimiter instance timeout value should always be less than the RestTemplate timeout value.",
+        "Values should be tuned as per component test results."
+      ],
+      "ImplementationExample": {
+        "Imports": [
+          "import org.springframework.cloud.client.circuitbreaker.CircuitBreaker;",
+          "import org.springframework.cloud.client.circuitbreaker.CircuitBreakerFactory;"
+        ],
+        "AutowiredField": "CircuitBreakerFactory circuitBreakerFactory;",
+        "Method": "public ResponseEntity<String> getConnectHost(URL url, HttpMethod method, HttpEntity<String> entity, String instanceName) throws Exception {",
+        "Implementation": [
+          "try {",
+          "    CircuitBreaker cb = circuitBreakerFactory.create(instanceName);",
+          "    // create instance of circuit breaker with the instance name",
+          "    return cb.run(() -> {",
+          "        // runs the function inside and returns",
+          "        return restTemplate.exchange(url, method, entity, String.class);",
+          "    }, throwable -> {",
+          "        LOGGER.error(\"Circuit breaker Executed the fallback for {} and exception is {}\", circuitBreakerName, throwable.getMessage());",
+          "        throw new RuntimeException(throwable);",
+          "    });",
+          "} catch (Exception e) {",
+          "    LOGGER.error(\"HttpGateway error: {}\", e.getMessage());",
+          "    throw getException(e, MyclassCrudConstants.COMPONENT_NAME);",
+          "}"
+        ]
+      }
+    }
+  ],
+  "HttpSink": [
+    {
+      "description": [
+        "HttpSink is a CRUD connector developed as an embeddable library for microservices HTTP interactions.",
+        "Once microservices include the Http CRUD connector library and make necessary configurations, they can start working with HTTP without any burden.",
+        "It converts messages between Java objects and XML."
+      ],
+      "usage": {
+        "note": "Once auto configuration finishes setup for HTTP connector for microservices, it exposes a bean of type ClientGateway, which can be @Autowired into any of microservice’s beans and used for sending/receiving HTTP messages.",
+        "sampleCode": [
+          "import org.springframework.stereotype.Component;",
+          "import org.springframework.beans.factory.annotation.Autowired;",
+          "@Component",
+          "public class HttpMessager {",
+          "    @Autowired",
+          "    private ClientGateway gateway;",
+          "    public Object send() {",
+          "        // sendAndReceive can be called with a message to send it over HTTP/WS",
+          "        Object response = gateway.sendAndReceive(headers, message);",
+          "        return response;",
+          "    }",
+          "}"
+        ]
+      },
+      "configuration": {
+        "description": "HTTP sink properties should be present in the XML/YAML file while making any HTTP sink call in the code.",
+        "example": {
+          "http": {
+            "crad": {
+              "enable": true
+            },
+            "app": {
+              "customHeaders": "SOAPAction",
+              "maxTotalConnections": 160,
+              "maxConnectionsPerRoute": 80,
+              "poolingEnabled": true
+            },
+            "overrides": {
+              "connectTimeout": 5100,
+              "connectionRequestTimeout": 5100,
+              "readTimeout": 5100,
+              "name": "EXAMPLEPROFILE"
+            },
+            "use-nt-true": {
+              "connectTimeout": 5100,
+              "connectionRequestTimeout": 5100,
+              "readTimeout": 5100,
+              "name": "OPXTZAUTH"
+            },
+            "use-nt-false": null,
+            "connection": {
+              "secondary.enable": false
+            },
+            "profile": {
+              "MYPROFILEUPDATE": {
+                "primary": {
+                  "keyStore": "${external.gateway.keyStore}",
+                  "keyStorePassword": "${external.gateway.keyStorePassword}",
+                  "trustStore": "${external.gateway.trustStore}"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "RestTemplate": [
+    {
+      "description": "RestTemplate is a class provided by the Spring framework that simplifies the process of making HTTP requests and handling responses. It abstracts away much of the boilerplate code typically associated with making HTTP calls, making it easier to interact with RESTful web services.",
+      "usage": {
+        "standard": {
+          "note": "RestTemplate is provided as a Spring bean and can be auto-wired for use.",
+          "code": [
+            "@Autowired",
+            "private RestTemplate restTemplate;",
+            "public PublicResponseEntity<T> MyDetails(HttpEntity<?> entity) {",
+            "    // ... (code to build request)",
+            "    return this.restTemplate.exchange(",
+            "        ServiceEndpoint,",
+            "        HttpMethod.POST,",
+            "        entity,",
+            "        OfferResponse.class",
+            "    );",
+            "}"
+          ]
+        },
+        "custom": {
+          "note": "For service-to-service communication with specific customizations (e.g., certificates), create and autowire a custom RestTemplate bean.",
+          "code": [
+            "public RestTemplate getRestTemplate(@Qualifier(\"pooledConnectionFactory\") ClientHttpRequestFactory clientHttpRequestFactory) {",
+            "    return new RestTemplate(clientHttpRequestFactory);",
+            "}",
+            "@Autowired",
+            "@Qualifier(\"custmeRestTemplate\") // Typo noted",
+            "private RestTemplate privateRestTemplate;"
+          ]
+        }
+      },
+      "configuration": {
+        "yaml": {
+          "ccp": {
+            "cloud": {
+              "rest": {
+                "enable": true,
+                "readTimeout": 5000,
+                "connectTimeout": 5000,
+                "connectionRequestTimeout": 6000,
+                "pooledEnabled": true,
+                "maxTotalConnections": 100,
+                "maxConnectionsPerRoute": 100,
+                "idleConnectionMonitorEnabled": true
+              }
+            }
+          }
+        },
+        "java": {
+          "class": "RestConfig",
+          "properties": {
+            "readTimeout": 0,
+            "connectTimeout": 0,
+            "connectionRequestTimeout": 0,
+            "pooledEnabled": false,
+            "maxTotalConnections": 0,
+            "maxConnectionsPerRoute": 0,
+            "idleConnectionMonitorEnabled": false
+          }
+        }
+      },
+      "issues": {
+        "description": "Improper use of custom RestTemplate (e.g., creating a new instance for every request) can cause memory issues.",
+        "symptoms": [
+          "idle-connection-evictor errors increasing over time",
+          "thread count increase",
+          "service crashes with OutOfMemoryError"
+        ],
+        "logExample": "ERROR [scheduling-1] o.s.s.t.s.LoggingErrorHandler$1: Unexpected error occurred in scheduled task.\njava.lang.OutOfMemoryError: unable to create native thread: possibly out of memory or process/resource limits reached\n    at java.base/java.lang.Thread.nativeCreate(Native Method)\n    at java.base/java.lang.Thread.start(Thread.java:XXX)\n    at org.apache.http.impl.conn.PoolingHttpClientConnectionManager",
+        "rootCause": "Creating new RestTemplate instances on each use instead of autowiring a shared one causes resource exhaustion (threads, memory, connections).",
+        "solution": "Always autowire a properly configured singleton RestTemplate to avoid OutOfMemoryError and pooling issues."
+      }
+    }
+  ],
+  "Hikari & Tomcat JDBC": [
+    {
+      "Hikari": {
+        "description": "Hikari is a JDBC DataSource implementation that provides a connection pooling mechanism. It is the default DataSource implementation in Spring Boot 3. The dependency on Hikari is automatically included in spring-boot-starter-data-jpa and spring-boot-starter-jdbc.",
+        "notes": "The below configuration needs to be added in the yml file for Hikari connection as per the requirement.",
+        "sample_config": "spring:\n  profiles: UAT\n  datasource:\n    url: jdbc:oracle:thin:@orabc44-scan.abc.nroot.net:port:XYZBC\n    username: userName\n    password: Password[cipher]\n    driver-class-name: oracle.jdbc.OracleDriver\n    hikari:\n      connection-timeout: 30000\n      minimum-idle: 3\n      maximum-pool-size: 30\n      idle-timeout: 60000\n      max-lifetime: 30000"
+      },
+      "Tomcat": {
+        "description": "Tomcat JDBC Connection Pool is a built-in component of the Tomcat application server.",
+        "notes": "To configure a Tomcat JDBC connection pool in a Spring Boot application using YAML, you can add the following to your application.yml file as per the requirement.",
+        "sample_config": "spring:\n  datasource:\n    type: org.apache.tomcat.jdbc.pool.DataSource\n    driver-class-name: com.mysql.cj.jdbc.Driver\n    url: jdbc:mysql://localhost:port/your_database_name\n    username: your_username\n    password: your_password\n    initial-size: 5\n    max-active: 10\n    min-idle: 2\n    validation-query: SELECT 1\n    test-on-borrow: true\n    test-while-idle: true"
+      }
+    }
+  ],
+  "Mongo DB": [
+    {
+      "description": "MongoDB pooling configuration needs to be added in the yaml file.",
+      "notes": "Values as per your best choice/requirement (Approved by CT team).",
+      "sample_config": {
+        "collection": "",
+        "datastore": "exampleDatastore",
+        "sslenabled": true,
+        "url": "mongodb://<USERNAME>:<PASSWORD>@host1:port,host2:port,host3:port/ExampleDB?mechanisms=SCRAM-SHA-256&authSource=admin&authMode=SCRAM-SHA-256",
+        "username": "example_user",
+        "password": "examplePass123",
+        "source": "ExampleDB",
+        "rulesdburl": "mongodb://<USERNAME>:<PASSWORD>@host1:port,host2:port/ExampleRulesDB?mechanisms=SCRAM-SHA-256&authSource=admin&authMode=SCRAM-SHA-256",
+        "rulesdbpassword": "examplePass123",
+        "rulesdbsource": "ExampleRulesDB",
+        "connectionTimeout": 15000,
+        "autoConnectRetry": true,
+        "readPreference": "primary",
+        "writeConcern": "majority",
+        "connectionsPerHost": 100,
+        "minConnectionsPerHost": 5,
+        "serverSelectionTimeout": 30000,
+        "maxWaitTime": 120000,
+        "maxConnectionIdleTime": 0,
+        "maxConnectionLifeTime": 0
+      }
+    }
+  ],
+  "JMS": [
+    {
+      "description": "JMS CRUD Connecctor makes JMS interactions for microservices. It is developed as embeded library.",
+      "setup": [
+        {
+          "step": 1,
+          "action": "The mentioned Dependency needs to be added in pom.xml for JMSConnector.",
+          "details": "<dependency><groupId></groupId><artifactId>jms-sink</artifactId></dependency>"
+        },
+        {
+          "step": 2,
+          "action": "Once JMSConnector library is embedded into Micro Service and necessary configurations are in place, JMSConnector can be enabled simply by annotating Spring Boot application with @EnableJMSIntegration.",
+          "details": "@EnableJMSIntegration\npublic class MyApplication {\n  public static void main(String[] args) {\n    SpringApplication.run(MyApplication.class, args);\n  }\n}"
+        },
+        {
+          "step": 3,
+          "action": "Once JMSConnector is enabled for micro service, it exposes a bean of type ClientJMSGateway, which can be @Autowired into any of micro service's beans and used for sending/receiving JMS messages.",
+          "details": "@Component\npublic class MyApplication {\n\n  @Autowired\n  ClientJMSGateway gateway;\n\n  public CustomRequestPayload invokeJMSCall(\n    CustomRequestPayload requestPayload, \n    String accountId, \n    String accountNumber,\n    Map<String, String> headers) {\n    return null; // Placeholder return\n  }\n}"
+        }
+      ],
+      "configuration": {
+        "notes": "Any service having JMS backend should add mentioned configuration in config.file.",
+        "sample_config": "tibco:\n  connectionProfiles:\n    profile-getLostStolenEligibility_leg1:\n      url: ssl://example-host1:port,ssl://example-host2:port\n      username: example_user\n      password: example_pass\n      ssl-password: example_pass\n      ssl-auth-only: true\n      ssl-trace: true\n      ssl-enable-verify-host-name: false\n      request-destination: Example.Request.Queue\n      reply-destination: Example.Reply.Queue\n      message-cache-size: 100\n      ssl-cert: example_cert.pem\n      ssl-trusted-certs-store: example_cert.pem\n      timeout: 5000\n      time-to-live: 5000\n      overrides:\n        - name: support\n    profile-getLostStolenEligibility_leg2:\n      url: ssl://example-host1:port,ssl://example-host2:port\n      username: example_user\n      password: example_pass\n      ssl-password: example_pass\n      ssl-auth-only: true\n      ssl-trace: true\n      ssl-enable-verify-host-name: true"
+      }
+    }
+  ],
+  "kafka": [
+    {
+      "setup": [
+        {
+          "step": 1,
+          "checklist": "Mentioned dependency needs to be added in the pom.xml.",
+          "config": "<dependency>\n  <groupId>org.springframework.kafka</groupId>\n  <artifactId>spring-kafka</artifactId>\n</dependency>"
+        },
+        {
+          "step": 2,
+          "checklist": "In order to get features of Apache Kafka, we need to apply @EnableKafka.",
+          "config": "@SpringBootApplication\npublic class TestApplication {\n  public static void main(String[] args) {\n    SpringApplication.run(TestApplication.class, args);\n  }\n}"
+        }
+      ],
+      "configuration": {
+        "checklist": "Kafka Spring Boot configuration",
+        "sample_config": "spring:\n  kafka:\n    bootstrap-servers:\n      - kafka-broker1.example.com:port\n      - kafka-broker2.example.com:port\n      - kafka-broker3.example.com:port\n    producer:\n      key-serializer: org.apache.kafka.common.serialization.StringSerializer\n      value-serializer: org.apache.kafka.common.serialization.StringSerializer\n      retries: 3\n      retry.backoff.ms: 1000\n      acks: 1\n    consumer:\n      group-id: example-consumer-group\n      auto-offset-reset: earliest\n      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer\n      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer\n    properties:\n      security.protocol: SASL_SSL\n      sasl.mechanism: GSSAPI\n      sasl.kerberos.service.name: kafka-service\n      ssl.truststore.location: /path/to/truststore.jks\n      ssl.truststore.password: ${KAFKA_TRUSTSTORE_PASSWORD}\n      sasl.jaas.config: >\n        com.sun.security.auth.module.Krb5LoginModule required\n        useKeyTab=true storeKey=true\n        keyTab=\"/path/to/keytab.keytab\"\n        principal=\"your_kerberos_principal\";"
+      },
+      "implementation": {
+        "checklist": "Kafka message producer and consumer implementation",
+        "producer": "public class MessageProducer {\n\n  private static final Logger log = LoggerFactory.getLogger(MessageProducer.class);\n\n  @Autowired\n  private KafkaTemplate<String, String> kafkaTemplate;\n\n  @Value(\"${mjmapp.kafka.topic}\")\n  private String topic;\n\n  public void send(String message) {\n    log.info(\"MESSAGE SENT FROM PRODUCER END = \" + message);\n    kafkaTemplate.send(topic, message);\n  }\n}",
+        "consumer": "public class MessageConsumer {\n\n  @Autowired\n  private MessageRepository messageRepo;\n\n  @KafkaListener(topics = \"${mjmapp.kafka.topic}\", groupId = \"192\")\n  public void consume(String message) {\n    log.info(\"MESSAGE RECEIVED AT CONSUMER END = \" + message);\n    messageRepo.addMessage(message);\n  }\n}"
+      }
+    }
+  ],
+  "Synchronized_block": [
+    {
+      "description": "Synchronized methods and blocks are used for thread synchronization, ensuring that only one thread can access a critical section of the code at a time to prevent data corruption in multithreaded environment.",
+      "checklist": {
+        "context": "In the Identifiers service, the following synchronized block is used inside a Kafka consumer and controller, with a wait time of 2 seconds configured.",
+        "code_snippet": "try {\n  synchronized (this) {\n    long startTime = System.currentTimeMillis();\n    wait(this.waitTime);\n    logger.info(\"Waiting current thread for retail customer transaction wait time is {} ms\", (System.currentTimeMillis() - startTime));\n  }\n} catch (InterruptedException e) {\n  logger.info(\"Exception occurred while waiting current thread for retail customer transaction: {}\", e.getMessage());\n}",
+        "analysis": "The above code will wait for 2 seconds as per wait time configured. If thread is not completed in that amount of time and other thread is waiting this will create a deadlock situation. And also notified thread is not used here. Since this service has very less tps only 12 transaction per day is there for this service. , in that case this will work as it has very low TPS."
+      },
+      "conclusion": "It is not recommended to use synchronized block for the service which has more then 2 TPS of volume."
+    }
+  ],
+  "Solace": [
+    {
+      "description": "Integration with Solace messaging.",
+      "dependency": {
+        "group_id": "com.solace.spring.boot",
+        "artifact_id": "solace-jms-spring-boot-starter",
+        "version": "4.3.0"
+      },
+      "configuration": {
+        "notes": "The mentioned configurations should be added in the application.yml.",
+        "sample_config": "solace:\n  topicname: TNAMXYZ/EXAMPLE/ABVC/12345\njava:\n  host: ctxs://example.net:638219\n  msgVpn: ExampleVPN_name1\n  clientUsername: {User_name}\n  clientPassword: {Password}\n  connectRetries: 3\n  connectRetriesPerHost: 1\n  sslProperties:\n    IGNORE_DUPLICATE_SUBSCRIPTION_ERROR: true\n    SSL_TRUST_STORE: DEV1_Solace.jks\n    SSL_TRUST_STORE_FORMAT: JKS\n    SSL_TRUST_STORE_PASSWORD: password"
+      },
+      "publishing_example": {
+        "notes": "Sample code to publish a message to a topic.",
+        "controller": "public ResponseEntity<Void> PublishEvent(@RequestBody TJSyncResponse message) throws Exception {\n    LOGGER.info(\"Entering testPublishToSolaceTopic() Controller call\");\n    if (message != null) {\n        publisher.sendEvent(message);\n        LOGGER.info(\"Publishing to Solace Topic is completed\");\n        return new ResponseEntity<>(HttpStatus.OK);\n    } else {\n        LOGGER.info(\"Topic message is empty\");\n        return new ResponseEntity<>(HttpStatus.BAD_REQUEST);\n    }\n}",
+        "publisher": "@Value(\"${solace.topicname}\")\nprivate String topicName;\n\npublic void sendEvent(TJSyncResponse msg) throws Exception {\n    LOGGER.info(\"Sending Message to topic\");\n    JsonNode node = mapper.convertValue(msg, JsonNode.class);\n    GenericJsonNodeEvent event = new GenericJsonNodeEvent(node, topicName);\n    publisher.publishEvent(event);\n    LOGGER.info(\"Topic Message sent\");\n}"
+      }
+    }
+  ],
+  "Loggers": [
+    {
+      "recommendation": "Only use ERROR level logs inside a catch block; avoid INFO or DEBUG.",
+      "example": "catch(Exception e){\n  LOGGER.error(\"Exception in flow\", e);\n}"
+    },
+    {
+      "recommendation": "Use an isDebugEnabled() check before logging potentially expensive operations, like object serialization.",
+      "example": "if(LOGGER.isDebugEnabled()) {\n  LOGGER.debug(mapper.writeValueAsString(object));\n}"
+    },
+    {
+      "recommendation": "Avoid using e.printStackTrace(). Use an appropriate logger instead.",
+      "example": "Instead of e.printStackTrace(), it is recommended to use logger.error()."
+    },
+    {
+      "recommendation": "Avoid using System.out.println() or System.out.print(). Use an appropriate logger.",
+      "example": "Instead of System.out.println(), logger.debug() or logger.info() should be used."
+    },
+    {
+      "recommendation": "Avoid printing static data in loops.",
+      "example": "Logger printing static data in a loop should be moved outside of the loop."
+    },
+    {
+      "recommendation": "Move method entry and exit loggers from INFO to DEBUG level.",
+      "example": "Method Entry/Exit Loggers are useful for debugging purposes only."
+    },
+    {
+      "recommendation": "Prevent custom logging of response time and request context info, as this is often handled by default.",
+      "example": "Service response time is printed by default as part of the METRICS logger."
+    }
+  ],
+  "SecureRandom": {
+    "overview": "SecureRandom is used for generating cryptographically secure random numbers but can block if the system's entropy pool is depleted, affecting application responsiveness. Entropy is the randomness collected by the OS from hardware events. It should be avoided where a strong random number is not strictly required.",
+    "issue": {
+      "context": "In one service, getServiceURL was generated using SecureRandom, which created thread contention.",
+      "problematic_code": "public String getServiceURL(String serviceName) throws Exception {\n    SecureRandom random = new SecureRandom();\n    String serviceUrl = \"\";\n    // ... code that uses random.nextInt() to select a service instance\n    return serviceUrl;\n}",
+      "recommendation": "Instead of using SecureRandom, the service URL can be generated using the Eureka discovery client directly, which is designed for this purpose.",
+      "recommended_code": "public String getServiceURL(String serviceName) throws ServerUnavailableException {\n    String serviceUrl = null;\n    try {\n        InstanceInfo instance = discoveryClient.getNextServerFromEureka(serviceName, false);\n        serviceUrl = instance.getHomePageUrl();\n    } catch (Exception e) {\n        LOGGER.error(\"Error getting service URL: \" + e.getMessage(), e);\n        throw new ServerUnavailableException(e);\n    }\n    return serviceUrl;\n}"
+    }
+  },
+  "SessionProfile": {
+    "overview": "SessionProfile calls are made across most microservices to fetch session details.",
+    "guideline": "Only one SessionProfile call per API is recommended.",
+    "issue_example": {
+      "api": "/api/v1/users/accounts/profile/details",
+      "observation": "In this API, two separate calls to get session details were identified within the same request flow.",
+      "call_1": "ControllerClass -> getProfile() -> SessionProfile",
+      "call_2": "ControllerClass -> utils.getRequestUserId() -> getid() -> getSessionDetails -> SessionProfile"
+    }
+  },
+  "UserEntitlement": {
+    "overview": "Multiple calls are being made to the EXAMPLE-SERVICE to get feature set details from Gemfire.",
+    "service_details": {
+      "name": "EXAMPLE-SERVICE",
+      "api": "/example/myFiles/featureSet"
+    },
+    "observation": "Multiple services call 'Service.getFeatureSet()' repeatedly within the same request.",
+    "recommendation": "The feature set should be fetched once in the controller and the result should be passed to the callee methods where required.",
+    "example": "Map<String, String> features = Service.getFeatureSet();"
+  },
+  "RedundantLocatorCall": {
+    "overview": "Identified redundant service-to-service calls to fetch account locator information.",
+    "scenarios": [
+      {
+        "observation": "A service calls another service to get account details (which already contains the location) and then makes a separate, direct call to get the same location information.",
+        "call_chain": "1st call: BRD-AM-D-edd -> BRD-AM-D-XYZ -> BRD-FDN-D-ABX (gets location)\n2nd call: BRD-AM-D-HBZ -> BRD-FDN-D-BND (gets same location again)",
+        "recommendation": "Remove the second, direct call for the locator information, as it is already available in the response from the first account details call."
+      },
+      {
+        "observation": "A domain service retrieves locator information from both a CRUD service and indirectly via an AccountDetails service within the same flow.",
+        "call_chain": "1st call: BRD-AM-C-SpendSummary -> BRD-AM-D-AccountDetails -> BRD-FDN-D-CardAcctLocator\n2nd call: BRD-AM-C-SpendSummary -> BRD-FDN-D-CardAcctLocator",
+        "recommendation": "The direct call from the SpendSummary CRUD should be removed as the information is already fetched via the AccountDetails service."
+      }
+    ]
+  },
+  "FusionGemfire": {
+    "overview": "Redundant Gemfire read and write calls were observed in Mang Fusion services.",
+    "affected_apis_example": [
+      "/api/cards/accounts/summary/details?cardNumber=1234-5678-9012-3456",
+      "/api/accounts/ACC1234567890/transactions?fromDate=2025-01-01&toDate=2025-07-01"
+    ],
+    "identified_issues": [
+      {
+        "issue": "Both caller and callee methods generate the Gemfire account region, leading to redundancy.",
+        "example": "ClassController.getAcctActivityResponse1 generates the accountRegion, and the method it calls, ExampleClass.getAcctActivityResponse1(), also generates it."
+      },
+      {
+        "issue": "Redundant calls to fetch context objects.",
+        "example": "Both cacheContext.getSessionSharedContext() and cacheContext.getCustomerSharedContext() are called, where the latter can be removed as it returns the same object."
+      },
+      {
+        "issue": "Redundant Gemfire read calls within the same method.",
+        "example": "In ClassController.getAcctActivityResponse1, the accountRegion is accessed, and then a subsequent method call re-accesses the same region."
+      }
+    ]
+  }
+}

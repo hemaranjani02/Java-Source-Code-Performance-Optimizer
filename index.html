@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Code Optimizer</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+     <script src="script.js"></script>
+     <script>
+  try {
+    const script = document.createElement('script');
+    script.src = 'script.js';
+    script.onerror = function () {
+      document.body.innerHTML = '<h2 style="color:red;">🚨 Failed to load script.js</h2>';
+    };
+    document.head.appendChild(script);
+  } catch (e) {
+    document.body.innerHTML = '<h2 style="color:red;">🚨 Critical JS error occurred</h2>';
+  }
+</script>
+
+  
+</head>
+<body>
+ 
+<!--Horizontal nav bar-->
+ <nav class="nav_bar" id="nav_bar">
+  <ul>
+    <li><h1>Performance Engineering</h1></li>
+    <li>
+      <form>
+        <label for="model">Model</label>
+        <select id="model" name="model">
+          <option value="llama">Llama</option>
+          <option value="GPT">GPT 4</option>
+        </select>
+        <!-- <button type="submit">Submit</button> -->
+      </form>
+    </li>
+  </ul>
+</nav>
+
+
+<!--vertical side bar-->
+<div class="sidebar">
+    <!-- <h2>Code Optimizer</h2> -->
+    <h2><a href="#" onclick="goHome()">Code Optimizer</a></h2>
+    <a href="#java" onclick="setLanguage('java')">Optimize JAVA Code</a>
+    <a href="#python" onclick="setLanguage('python')">Optimize Python Code</a>
+    <a href="#js" onclick="setLanguage('js')">Optimize JavaScript Code</a>
+    <a href="#" onclick="showSummaryUI()">Problem Summary Generator</a>
+    <a href="#" onclick="showDecomposeUI()">Decompose Summarized Generator</a>
+  </div>
+
+
+
+<div class="chat-container">
+
+  <!--bot reply-->
+  <div class="chat-history" id="chat-history">
+
+    <div class="message bot-message" style="background-color: white;"> <!-- bot given code  --></div>
+   
+  </div>
+
+<!--input area-->
+ 
+<div class="chat-input-container"  >
+  <textarea id="user-input" placeholder="Welcome to Performance Code Optimizer..."></textarea>
+   <button onclick="sendMessage()">Send</button>
+</div>
+
+<div id="loading-spinner" style="display:none; text-align:center; margin:10px;">
+  <img src="https://i.gifer.com/ZZ5H.gif" alt="Loading..." width="60" />
+</div>
+
+
+
+ </div>
+
+<!-- summarizer container (hidden by default) -->
+<div id="summary-container" style="display: none;margin-top: 100px;">
+  <div class="form-container">
+    <h1>Problem Summary Generator</h1>
+     <!-- 🔻 Error Message Container -->
+    <div id="summary-error" style="color: red; font-weight: bold; margin-bottom: 10px;"></div>
+
+    <label for="problem">Problem Statement</label>
+    <textarea id="problem" placeholder="Enter the problem..."></textarea>
+
+    <label for="impact">Impact of Problem</label>
+    <textarea id="impact" placeholder="Describe the impact..."></textarea>
+
+    <label for="rootCause">Root Cause</label>
+    <textarea id="rootCause" placeholder="Describe the root cause..."></textarea>
+
+    <label for="fix">Fix of Problem</label>
+    <textarea id="fix" placeholder="Describe the fix..."></textarea>
+
+    <button onclick="submitSummary()">Summarize</button>
+
+    <div id="summary-loading-spinner" style="display:none; text-align:center; margin:10px;">
+      <img src="https://i.gifer.com/ZZ5H.gif" alt="Loading..." width="60" />
+    </div>
+
+    <label for="summary-result">Summarized Output</label>
+    <textarea id="summary-result" readonly placeholder="Summary will appear here..."></textarea>
+
+  </div>
+</div>
+
+
+<div id="summary-container1" style="display: none; margin-top: 100px;">
+  <div class="form-container1">
+
+    <h1>Decompose Summarized Generator</h1>
+        <!-- 🔻 Error Message Container -->
+    <div id="decompose-error" style="color: red; font-weight: bold; margin-bottom: 10px;"></div>
+    <label for="summary-input">Summarized Output</label>
+    <textarea id="summary-input" placeholder="Paste summarized content here..."></textarea>
+
+    <button onclick="decomposeSummary()">Decompose</button>
+
+    <div id="decompose-loading-spinner" style="display:none; text-align:center; margin:10px;">
+     <img src="https://i.gifer.com/ZZ5H.gif" alt="Loading..." width="60" />
+    </div>
+
+    <label for="decomposed-problem">Problem Statement</label>
+    <textarea id="decomposed-problem" readonly></textarea>
+
+    <label for="decomposed-impact">Impact</label>
+    <textarea id="decomposed-impact" readonly></textarea>
+
+    <label for="decomposed-root">Root Cause</label>
+    <textarea id="decomposed-root" readonly></textarea>
+
+    <label for="decomposed-fix">Fix</label>
+    <textarea id="decomposed-fix" readonly></textarea>
+
+  </div>
+</div>
+
+
+</body>
+</html>
+
+
+
+
+
+
